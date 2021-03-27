@@ -29,12 +29,43 @@ typename pcl::PointCloud<PointT>::Ptr ProcessPointClouds<PointT>::FilterCloud(ty
     auto startTime = std::chrono::steady_clock::now();
 
     // TODO:: Fill in the function to do voxel grid point reduction and region based filtering
+    pcl::VoxelGrid<PointT> vg;
+    typename pcl::PointCloud<PointT>::Ptr cloudFiltered (new pcl::PointCloud<PointT>);
+    vg.setInputCloud(cloud);
+    vg.setLeafSize(filterRes,filterRes,filterRes);
+    vg.filter(*cloudFiltered);
+
+    typename pcl::PointCloud<PointT>::Ptr cloudRegion (new pcl::PointCloud<PointT>);
+
+    pcl::CropBox<PointT> region(true);
+    region.setMin(minPoint);
+    region.setMax(maxPoint);
+    region.setInputCloud(cloudFiltered);
+    region.filter(*cloudRegion);
+
+    std::vector<int> indexes;
+    pcl::CropBox<PointT> roof(true);
+    roof.setMin(Eigen::Vector4f(-1.5,-1.7,-1,1));
+    roof.setMax(Eigen::Vector4f(2.6,1.7,-.4,1));
+    roof.setInputCloud(cloudRegion);
+    roof.filter(indexes);
+
+    pcl::PointIndices::Ptr inliers (new pcl::PointIndices);
+    for(int point: indexes)
+      inliers->indices.push_back(point);
+
+    pcl::ExtractIndices<PointT> extract;
+    extract.setInputCloud(cloudRegion);
+    extract.setIndices(inliers);
+    extract.setNegative(true);
+    extract.filter(*cloudRegion);
+
 
     auto endTime = std::chrono::steady_clock::now();
     auto elapsedTime = std::chrono::duration_cast<std::chrono::milliseconds>(endTime - startTime);
     std::cout << "filtering took " << elapsedTime.count() << " milliseconds" << std::endl;
 
-    return cloud;
+    return cloudRegion;
 
 }
 
@@ -90,20 +121,11 @@ std::pair<typename pcl::PointCloud<PointT>::Ptr, typename pcl::PointCloud<PointT
   		y3 = cloud->points[*itr].y;
   		z3 = cloud->points[*itr].z;
 
-  		std::vector<float> v1(3);
-  		std::vector<float> v2(3);
-  		// initializing vector 1 (v1) -- point1 -> point2
-  		v1.push_back(x2-x1);
-  		v1.push_back(y2-y1);
-  		v1.push_back(z2-z1);
-  		// initializing vector 2 (v2) -- point1 -> point3
-  		v1.push_back(x3-x1);
-  		v1.push_back(y3-y1);
-  		v1.push_back(z3-z1);
   		// Computing cross product v1xv2
   		float a = ((y2 - y1)*(z3 - z1) - (z2 - z1)*(y3 - y1)); // i
   		float b = - ((x2 - x1)*(z3 - z1) - (z2 - z1)*(x3 - x1)); // j
-  		float c = ((x2 - x1)*(y3 - y1) - (y2 - y1)*(x3 - x1)); // k
+      //float b = ((z2 - z1)*(x3 - x1) - (x2 - x1)*(z3 - z1));
+      float c = ((x2 - x1)*(y3 - y1) - (y2 - y1)*(x3 - x1)); // k
   		float d = - ( a*x1 + b*y1 + c*z1);
 
   		for(int index=0; index < cloud->points.size(); index++)
@@ -111,30 +133,28 @@ std::pair<typename pcl::PointCloud<PointT>::Ptr, typename pcl::PointCloud<PointT
   			if(inliers.count(index)>0)
   				continue;
 
-  			pcl::PointXYZ point = cloud->points[index];
-  			float x4 = point.x;
-  			float y4 = point.y;
-  			float z4 = point.z;
+  			float x4 = cloud->points[index].x;
+  			float y4 = cloud->points[index].y;
+  			float z4 = cloud->points[index].z;
 
-  			float d = fabs(a*x4 + b*y4 + c*z4 + d)/sqrt(a*a + b*b + c*c); // fabs - float abs
+  			float dist = fabs(a*x4 + b*y4 + c*z4 + d)/sqrt(a*a + b*b + c*c); // fabs - float abs
 
-  			if (d < distanceThreshold)
+  			if (dist < distanceThreshold)
   				inliers.insert(index);
 
-  		}
+        if(inliers.size()>inliersResult.size()){
+      			inliersResult = inliers;
+      	}
 
-  		if(inliers.size()>inliersResult.size()){
-  			inliersResult = inliers;
   		}
-
   	}
 
-    pcl::PointCloud<pcl::PointXYZ>::Ptr  cloudInliers(new pcl::PointCloud<pcl::PointXYZ>());
-  	pcl::PointCloud<pcl::PointXYZ>::Ptr cloudOutliers(new pcl::PointCloud<pcl::PointXYZ>());
+    pcl::PointCloud<pcl::PointXYZI>::Ptr  cloudInliers(new pcl::PointCloud<pcl::PointXYZI>());
+  	pcl::PointCloud<pcl::PointXYZI>::Ptr cloudOutliers(new pcl::PointCloud<pcl::PointXYZI>());
 
   	for(int index = 0; index < cloud->points.size(); index++)
   	{
-  		pcl::PointXYZ point = cloud->points[index];
+  		pcl::PointXYZI point = cloud->points[index];
   		if(inliersResult.count(index))
   			cloudInliers->points.push_back(point);
   		else
@@ -146,7 +166,7 @@ std::pair<typename pcl::PointCloud<PointT>::Ptr, typename pcl::PointCloud<PointT
     std::cout << "plane segmentation took " << elapsedTime.count() << " milliseconds" << std::endl;
 
     std::pair<typename pcl::PointCloud<PointT>::Ptr, typename pcl::PointCloud<PointT>::Ptr> segResult;
-    segResult.first = cloudOutliers; // "ObstaclesCloud"
+    segResult.first = cloudOutliers ; // "ObstaclesCloud"
     segResult.second = cloudInliers; // "PlaneCloud"
     return segResult;
 }
